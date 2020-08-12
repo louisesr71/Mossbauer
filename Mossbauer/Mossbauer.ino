@@ -87,10 +87,10 @@ void setup() {
     // serial_isr: 128
     // (serial1 = 64, usb = 112, default = 128) (all multiples of 16, 0 - 255)
     
-  //NVIC_SET_PRIORITY(IRQ_PORTD, 96) // works without this line
+  NVIC_SET_PRIORITY(IRQ_PORTD, 96); // works without this line
   // Port assignments: https://forum.pjrc.com/threads/23950-Parallel-GPIO-on-Teensy-3-0?p=34158&viewfull=1#post34158
   serialTimer.priority(240);
-  phaseTimer.priority(0);
+  phaseTimer.priority(64);
   
 
   // Reset sample and hold circuit
