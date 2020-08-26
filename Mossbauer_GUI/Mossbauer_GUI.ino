@@ -17,8 +17,8 @@ volatile uint32_t pha[4096];
 volatile uint32_t mcs[1024];
 
 // INIT constants:
-const uint16_t serialInterval = 2; // in seconds
-const uint16_t freq = 13; // in Hz
+uint16_t serialInterval = 1; // in seconds
+uint16_t freq = 13; // in Hz
 const float twopi = 2 * 3.1415926;
 // Lookup Tables:
 uint16_t posArray[4096];
@@ -99,39 +99,58 @@ void loop() {
   if (serialFlag) {
     uint32_t phaCopy[4096];
     uint32_t mcsCopy[1024];
-    // Don't want to stop phase_isr, so use detachInterrupt() instead of noInterrupts()
-    detachInterrupt(digitalPinToInterrupt(comparatorPin)); // Only disable pulse_isr
     
+    detachInterrupt(digitalPinToInterrupt(comparatorPin)); // Only disable pulse_isr
     memcpy(phaCopy, pha, sizeof phaCopy);
     memcpy(mcsCopy, mcs, sizeof mcsCopy);
-    //memset(pha, 0, sizeof pha);
-    //memset(mcs, 0, sizeof mcs);
-    
-    // May need to clear interrupt flag: https://forum.pjrc.com/threads/44889-How-to-clear-an-external-interrupt-s-status-flag-in-Teensyduino-for-Teensy-3-2
-    //PORTD_ISFR = CORE_PIN21_BITMASK; 
     attachInterrupt(digitalPinToInterrupt(comparatorPin), pulse_isr, FALLING); // Reenable pulse_isr
 
-    // Copying and clearing the arrays takes ~390 us, so some pulses will be missed
+    // Copying the arrays takes ~250 us, so some pulses will be missed
     // Reset sample and hold; missed pulses will leave sample and hold high, preventing comparator falling edge
     pinMode(resetPin, OUTPUT);
     digitalWrite(resetPin, LOW);
     while (digitalRead(comparatorPin) == LOW ) {}
     pinMode(resetPin, INPUT);
-
-    // OUTPUT pha array
+    
+    // Send phaCopy and mcsCopy over serial
     for (int i = 0; i < 4096; i++) {
-      Serial.print(i);
-      Serial.print(":   ");
-      Serial.println(phaCopy[i]);
+      Serial.print(phaCopy[i]);
+      Serial.print(",");
     }
-    //OUTPUT mcs array
-    for (int i = 0; i < 1024; i++) {
-      Serial.print(i);
-      Serial.print(":   ");
-      Serial.println(mcsCopy[i]);
+    for (int i = 0; i < 1023; i++) {
+      Serial.print(mcsCopy[i]);
+      Serial.print(",");
     }
+    Serial.println(mcsCopy[1023]);
     
     serialFlag = false;
+  }
+
+  if (Serial.available()) {
+    char message = Serial.read();
+    switch (message) {
+      case 'r':
+      case 'R':
+        // Clear pha and mcs arrays and then reset sample and hold
+        detachInterrupt(digitalPinToInterrupt(comparatorPin)); // Only disable pulse_isr
+        memset(pha, 0, sizeof pha);
+        memset(mcs, 0, sizeof mcs);
+        attachInterrupt(digitalPinToInterrupt(comparatorPin), pulse_isr, FALLING); // Reenable pulse_isr
+        
+        pinMode(resetPin, OUTPUT);
+        digitalWrite(resetPin, LOW);
+        while (digitalRead(comparatorPin) == LOW ) {}
+        pinMode(resetPin, INPUT);
+        break;
+      case 'u':
+      case 'U':
+        // Update timers
+        freq = Serial.parseInt();
+        phaseTimer.update((int)((1./(freq*4096)) * 1000000));
+        serialInterval = Serial.parseInt();
+        serialTimer.update(serialInterval * 1000000);
+        break;
+    }
   }
 }
 
