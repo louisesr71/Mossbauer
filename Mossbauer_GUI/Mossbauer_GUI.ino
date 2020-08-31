@@ -9,6 +9,8 @@ const int piezoPin = A14;
   
 // INIT variables:
 volatile bool serialFlag = false;
+bool recording = false;
+bool piezoEnabled = false;
 uint16_t adcValue;
 volatile uint16_t phase = 0;
 volatile uint16_t velPhase = 0;
@@ -77,14 +79,9 @@ void setup() {
   phaseTimer.begin(phase_isr, (int)((1./(freq*4096)) * 1000000));
   // Attach serialTimer to call serial_isr every 5?? min
   serialTimer.begin(serial_isr, serialInterval*1000000);
-  // Attach hardware interrupt to call pulse_isr on falling edge of comparatorPin
-  attachInterrupt(digitalPinToInterrupt(comparatorPin), pulse_isr, FALLING);
 
   // SET interrupt priorities:  
   NVIC_SET_PRIORITY(IRQ_PORTD, 96);
-  // Port assignments: https://forum.pjrc.com/threads/23950-Parallel-GPIO-on-Teensy-3-0?p=34158&viewfull=1#post34158
-  // Priorities: https://forum.pjrc.com/threads/26397-Interrupt-priority-for-attachInterrupt#:~:text=Yes%2C%20on%20Teensy%20all%20the,%22%20priority%20in%20Cortex%20M).
-  // (usb serial is 112, hardware interrupt default is 128)
   serialTimer.priority(240);
   phaseTimer.priority(64);
   
@@ -96,7 +93,12 @@ void setup() {
 }
 
 void loop() {
-  if (serialFlag) {
+  for (int i = 0; i < 4096; i++) {
+    Serial.println(velArray[i]);
+  }
+  delay(5000);
+  
+  if (recording && serialFlag) {
     uint32_t phaCopy[4096];
     uint32_t mcsCopy[1024];
     
@@ -129,62 +131,115 @@ void loop() {
   if (Serial.available()) {
     char message = Serial.read();
     switch (message) {
-      case 'r':
-      case 'R':
-        // Clear pha and mcs arrays and then reset sample and hold
-        detachInterrupt(digitalPinToInterrupt(comparatorPin)); // Only disable pulse_isr
-        memset(pha, 0, sizeof pha);
-        memset(mcs, 0, sizeof mcs);
-        attachInterrupt(digitalPinToInterrupt(comparatorPin), pulse_isr, FALLING); // Reenable pulse_isr
-        
-        pinMode(resetPin, OUTPUT);
-        digitalWrite(resetPin, LOW);
-        while (digitalRead(comparatorPin) == LOW ) {}
-        pinMode(resetPin, INPUT);
+      case 'a':
+        start_record();
         break;
+      case 'o':
+        stop_record();
+        break;
+      case 'r':
+        reset_record();
+        break;
+      case 'e':
+        enable_piezo();
+        break;
+      case 'd':
+        disable_piezo();
       case 'u':
-      case 'U':
-        // Update timers
-        freq = Serial.parseInt();
-        phaseTimer.update((int)((1./(freq*4096)) * 1000000));
-        serialInterval = Serial.parseInt();
-        serialTimer.update(serialInterval * 1000000);
+        update_const();
         break;
     }
   }
 }
 
+
+
+/* ISR FUNCTIONS */
+
 void pulse_isr() {
   adcValue = analogRead(sampleHoldPin);
-  //Serial.println(adcValue);
 
   // Reset sample and hold circuit
   pinMode(resetPin, OUTPUT);
   digitalWrite(resetPin, LOW);
   while (digitalRead(comparatorPin) == LOW ) {}
-  //delayMicroseconds(5); // Add delay if necessary
   pinMode(resetPin, INPUT);
 
   pha[adcValue]++;
-  // Check if in theshold before adding to mcs
-  mcs[velPhase]++;
+  // Only add pulse to mcs if the piezo is running
+  if (piezoEnabled) { 
+    if (adcValue >= 0 && adcValue <= 4095) {  // Change to mcs thresholds
+      mcs[velPhase]++;
+    }
+  }
 
   // Check for overflow
-  // At 50 us between pulses, it takes at least 60 hrs to overflow uint32_t
   if (pha[adcValue] >= 4294967200 || mcs[velPhase] >= 4294967200) { 
     serialFlag = true;
   }
 }
 
 void phase_isr() {
-  analogWrite(piezoPin, posArray[phase]);
-  velPhase = velArray[phase];
-  phase++;
-  if (phase >= 4096) {
-    phase = 0;
+  if (piezoEnabled) {
+    analogWrite(piezoPin, posArray[phase]);
+    velPhase = velArray[phase];
+    phase++;
+    if (phase >= 4096) {
+      phase = 0;
+    }
   }
 }
 
 void serial_isr() {
   serialFlag = true;
+}
+
+
+
+/* SERIAL UPDATE FUNCTIONS */
+
+void start_record() {
+  reset_record();
+  attachInterrupt(digitalPinToInterrupt(comparatorPin), pulse_isr, FALLING);
+  recording = true;
+  serialInterval = Serial.parseInt();
+  serialTimer.update(serialInterval * 1000000);
+}
+
+void stop_record() {
+  detachInterrupt(digitalPinToInterrupt(comparatorPin));
+  recording = false;  
+}
+
+void reset_record() {
+  // Clear pha and mcs arrays
+  if (recording) { detachInterrupt(digitalPinToInterrupt(comparatorPin)); }
+  memset(pha, 0, sizeof pha);
+  memset(mcs, 0, sizeof mcs);
+  if (recording) { attachInterrupt(digitalPinToInterrupt(comparatorPin), pulse_isr, FALLING); }
+  
+  // Reset sample and hold
+  pinMode(resetPin, OUTPUT);
+  digitalWrite(resetPin, LOW);
+  while (digitalRead(comparatorPin) == LOW ) {}
+  pinMode(resetPin, INPUT);
+}
+
+void enable_piezo() {
+  piezoEnabled = true;
+  freq = Serial.parseInt();
+  phaseTimer.update((int)((1./(freq*4096)) * 1000000));
+}
+
+void disable_piezo() {
+  analogWrite(piezoPin, 0);
+  piezoEnabled = false;
+}
+
+void update_const() {
+  // Update timer intervals
+  freq = Serial.parseInt();
+  phaseTimer.update((int)((1./(freq*4096)) * 1000000));
+  serialInterval = Serial.parseInt();
+  serialTimer.update(serialInterval * 1000000);
 }
