@@ -41,6 +41,7 @@ void setup() {
   Serial.begin(115200);
   
   // Generate pos/vel look up tables
+  /* SINE WAVE 
   float w = 0;
   uint16_t i = 0;
   uint16_t pos;
@@ -58,6 +59,17 @@ void setup() {
     velArray[i] = vel; 
     w += twopi / 4096;
     i++;
+  }
+  */
+
+  /* QUADRATIC WAVE WITH LINEAR VELOCITY */
+  for (int i = 0; i < 2048; i++) {
+    posArray[i] = (int)(-1./512 * i * i + 4 * i + 2048);
+    velArray[i] = (int)((-0.5 * (i+1)) + 1024);
+  }
+  for (int i = 2048; i < 4096; i++) {
+    posArray[i] = (int)(1./512 * i * i - 12 * i + 18432);
+    velArray[i] = (int)((0.5 * i) - 1024);
   }
   
   // SET IO pinMode
@@ -93,11 +105,6 @@ void setup() {
 }
 
 void loop() {
-  for (int i = 0; i < 4096; i++) {
-    Serial.println(velArray[i]);
-  }
-  delay(5000);
-  
   if (recording && serialFlag) {
     uint32_t phaCopy[4096];
     uint32_t mcsCopy[1024];
